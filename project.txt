@@ -1,0 +1,170 @@
+#! /usr/bin/env python
+# -*- coding: utf-8 -*-
+
+import rospy
+import moveit_commander
+import geometry_msgs.msg
+import rosnode
+import actionlib
+import math
+from tf.transformations import quaternion_from_euler
+from control_msgs.msg import (GripperCommandAction, GripperCommandGoal)
+from moveit_msgs.msg import Constraints, OrientationConstraint
+from gazebo_msgs.msg import ModelStates
+from tf.transformations import quaternion_from_euler, euler_from_quaternion
+from geometry_msgs.msg import Point, Pose
+
+gazebo_model_states = ModelStates()
+
+def yaw_of(object_orientation):
+    #Convert quaternions to Euler angles and return yaw angles
+    euler = euler_from_quaternion(
+    (object_orientation.x, object_orientation.y,
+    object_orientation.z, object_orientation.w)) 
+    return euler[2]
+
+
+def callback(msg):
+    global gazebo_model_states
+    gazebo_model_states = msg
+
+def main():
+    global gazebo_model_states
+    rospy.init_node("sciurus17_pick_and_place_controller")
+    robot = moveit_commander.RobotCommander()
+    sub_model_states = rospy.Subscriber("gazebo/model_states", ModelStates, callback, queue_size=1)
+    eef_constraints = Constraints()
+    l_eef_oc = OrientationConstraint()
+    r_eef_oc = OrientationConstraint()
+
+    # Control of both arm groups
+    arm = moveit_commander.MoveGroupCommander("two_arm_group")
+    # Slow down the speed and acceleration.
+    arm.set_max_velocity_scaling_factor(0.2)
+    arm.set_max_acceleration_scaling_factor(0.2)
+    # Right hand initialization
+    r_gripper = actionlib.SimpleActionClient("/sciurus17/controller1/right_hand_controller/gripper_cmd", GripperCommandAction)
+    r_gripper.wait_for_server()
+    r_gripper_goal = GripperCommandGoal()
+    r_gripper_goal.command.max_effort = 2.0
+    # Left hand initialization
+    l_gripper = actionlib.SimpleActionClient("/sciurus17/controller2/left_hand_controller/gripper_cmd", GripperCommandAction)
+    l_gripper.wait_for_server()
+    l_gripper_goal = GripperCommandGoal()
+    l_gripper_goal.command.max_effort = 2.0
+
+    rospy.sleep(1.0)
+
+ # Set the posture to "home" as defined in SRDF.
+    arm.set_named_target("two_arm_init_pose")
+    arm.go()
+
+    OBJECT_NAME1 = "cube1" # The name of the object to grab
+    OBJECT_NAME2 = "cube2" # The name of the object to grab
+    # LEFT HAND
+    if OBJECT_NAME2 in gazebo_model_states.name:
+    	
+    	# Get the posture of the object
+        object_index2 = gazebo_model_states.name.index(OBJECT_NAME2)
+    	object_position2 = gazebo_model_states.pose[object_index2].position
+    	object_orientation2 = gazebo_model_states.pose[object_index2].orientation
+    	object_yaw = yaw_of(object_orientation2)
+
+	# Open left hand
+        l_gripper_goal.command.position = -0.7
+        l_gripper.send_goal(l_gripper_goal)
+        l_gripper.wait_for_result(rospy.Duration(1.0))
+
+	
+	#Approach the object
+	l_target_pose = geometry_msgs.msg.Pose()
+        print(object_position2.x)
+	print(object_position2.y)
+	print(object_position2.z)
+	l_target_pose.position.x = object_position2.x 
+	l_target_pose.position.y = object_position2.y
+	l_target_pose.position.z = 0.1
+	q = quaternion_from_euler(-3.14/2, 0.0, 0.0)
+	l_target_pose.orientation.x = q[0]
+	l_target_pose.orientation.y = q[1]
+	l_target_pose.orientation.z = q[2]
+	l_target_pose.orientation.w = q[3]
+	arm.set_pose_target(l_target_pose,"l_link7")
+        arm.go()  # execution
+
+
+        rospy.sleep(1.0)
+	# Close the left hand.
+        l_gripper_goal.command.position = -0.2
+        l_gripper.send_goal(l_gripper_goal)
+        l_gripper.wait_for_result(rospy.Duration(1.0))
+        arm.go()  # execution
+	
+	
+
+    # RIGHT HAND
+    if OBJECT_NAME1 in gazebo_model_states.name:
+    	
+    	#Get the posture of the object
+        object_index1 = gazebo_model_states.name.index(OBJECT_NAME1)
+    	object_position1 = gazebo_model_states.pose[object_index1].position
+    	object_orientation1 = gazebo_model_states.pose[object_index1].orientation
+    	object_yaw = yaw_of(object_orientation1)
+        # Open the right hand
+        r_gripper_goal.command.position = 0.7
+        r_gripper.send_goal(r_gripper_goal)
+        r_gripper.wait_for_result(rospy.Duration(1.0))
+	
+	#Approach the object
+	r_target_pose = geometry_msgs.msg.Pose()
+        print(object_position1.x)
+	print(object_position1.y)
+	print(object_position1.z)
+	r_target_pose.position.x = object_position1.x
+	r_target_pose.position.y = object_position1.y
+	r_target_pose.position.z = 0.12
+	q = quaternion_from_euler(3.14/2, 0.0, 0.0)
+	r_target_pose.orientation.x = q[0]
+	r_target_pose.orientation.y = q[1]
+	r_target_pose.orientation.z = q[2]
+	r_target_pose.orientation.w = q[3]
+	arm.set_pose_target(r_target_pose,"r_link7")
+        arm.go()  # execution
+
+	# Close right hand
+        r_gripper_goal.command.position = 0.2
+        r_gripper.send_goal(r_gripper_goal)
+        r_gripper.wait_for_result(rospy.Duration(1.0))
+	
+	rospy.sleep(1.0)
+	
+	# Set the posture to "home" as defined in SRDF.
+        arm.set_named_target("two_arm_init_pose")
+        arm.go()
+
+	# Open the right hand
+        r_gripper_goal.command.position = 0.7
+        r_gripper.send_goal(r_gripper_goal)
+        r_gripper.wait_for_result(rospy.Duration(1.0))
+
+	# Open left hand
+        l_gripper_goal.command.position = -0.7
+        l_gripper.send_goal(l_gripper_goal)
+        l_gripper.wait_for_result(rospy.Duration(1.0))
+
+
+
+
+	
+	
+	
+    
+     
+
+if __name__ == '__main__':
+
+    try:
+        if not rospy.is_shutdown():
+            main()
+    except rospy.ROSInterruptException:
+        pass
